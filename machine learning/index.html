@@ -1,0 +1,109 @@
+<div>Teachable Machine Image Model</div>
+<button id="start-button" type="button" onclick="init()">Start</button>
+<div id="status" role="status" aria-live="polite"></div>
+<div id="webcam-container"></div>
+<div id="label-container"></div>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<script type="text/javascript">
+    // More API functions here:
+    // https://github.com/googlecreativelab/teachablemachine-community/tree/master/libraries/image
+
+    // the link to your model provided by Teachable Machine export panel
+    const URL = "https://teachablemachine.withgoogle.com/models/GKhV-X-4M/";
+
+    let model, webcam, labelContainer, maxPredictions;
+    let isStarting = false;
+    let isPredicting = false;
+
+    // Start the camera directly from the Start click so its preview does not depend on model loading.
+    async function init() {
+        if (isStarting || model) return;
+
+        const status = document.getElementById("status");
+        const startButton = document.getElementById("start-button");
+        let webcamSetupComplete = false;
+        isStarting = true;
+        startButton.disabled = true;
+
+        try {
+            if (!webcam) {
+                status.textContent = "Requesting camera access...";
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("Camera access requires a secure page. Open this site using HTTPS or localhost.");
+                }
+
+                webcam = new tmImage.Webcam(200, 200, true);
+                await webcam.setup();
+                webcamSetupComplete = true;
+                await webcam.play();
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
+                window.requestAnimationFrame(cameraLoop);
+            }
+
+        } catch (error) {
+            if (webcam) {
+                if (webcamSetupComplete) webcam.stop();
+                if (webcam.canvas.parentNode) webcam.canvas.remove();
+                webcam = undefined;
+            }
+            const message = error && error.name === "NotAllowedError"
+                ? "Camera access was denied. Allow camera access in your browser and try again."
+                : error && error.name === "NotFoundError"
+                    ? "No camera was found. Connect a camera and try again."
+                    : error && error.name === "NotReadableError"
+                        ? "The camera is already in use by another app. Close it there and try again."
+                        : error && error.message
+                            ? error.message
+                            : "Could not start the camera.";
+            status.textContent = message;
+            console.error("Unable to start the camera:", error);
+            isStarting = false;
+            startButton.disabled = false;
+            return;
+        }
+
+        try {
+            status.textContent = "Camera is on. Loading model...";
+            const loadedModel = await tmImage.load(URL + "model.json", URL + "metadata.json");
+            maxPredictions = loadedModel.getTotalClasses();
+            labelContainer = document.getElementById("label-container");
+            for (let i = 0; i < maxPredictions; i++) {
+                labelContainer.appendChild(document.createElement("div"));
+            }
+            model = loadedModel;
+            status.textContent = "";
+        } catch (error) {
+            status.textContent = "Camera is on, but the model could not load. Check your internet connection and try Start again.";
+            console.error("Unable to load the model:", error);
+        } finally {
+            isStarting = false;
+            startButton.disabled = false;
+        }
+    }
+
+    function cameraLoop() {
+        if (!webcam) return;
+        webcam.update(); // update the webcam frame
+        window.requestAnimationFrame(cameraLoop);
+        if (model && !isPredicting) {
+            isPredicting = true;
+            predict().catch(error => {
+                console.error("Unable to classify the camera frame:", error);
+            }).finally(() => {
+                isPredicting = false;
+            });
+        }
+    }
+
+    // run the webcam image through the image model
+    async function predict() {
+        // predict can take in an image, video or canvas html element
+        const prediction = await model.predict(webcam.canvas);
+        for (let i = 0; i < maxPredictions; i++) {
+            const classPrediction =
+                prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+            labelContainer.childNodes[i].innerHTML = classPrediction;
+        }
+    }
+</script>
